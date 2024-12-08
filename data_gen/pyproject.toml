@@ -10,6 +10,7 @@ package-mode = false
 python = "^3.12"
 transformers = "^4.47.0"
 convokit = "^3.0.1"
+torch = "^2.5.1"
 
 
 [build-system]
