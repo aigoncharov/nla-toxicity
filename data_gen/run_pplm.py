@@ -1,11 +1,3 @@
-"""
-Example command with bag of words:
-python run_pplm.py -B space --cond_text "The president" --length 100 --gamma 1.5 --num_iterations 3 --num_samples 10 --stepsize 0.01 --window_length 5 --kl_scale 0.01 --gm_scale 0.95
-
-Example command with discriminator:
-python run_pplm.py -D sentiment --class_label 3 --cond_text "The lake" --length 10 --gamma 1.0 --num_iterations 30 --num_samples 10 --stepsize 0.01 --kl_scale 0.01 --gm_scale 0.95
-"""
-
 import json
 from operator import add
 import numpy as np
@@ -13,12 +5,34 @@ import torch
 from torch import nn
 from tqdm import trange
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from typing import Optional, Tuple, Union
+from transformers.file_utils import cached_path
+
 
 PPLM_BOW = 1
 PPLM_DISCRIM = 2
 PPLM_BOW_DISCRIM = 3
 SMALL_CONST = 1e-15
 BIG_CONST = 1e10
+
+DISCRIMINATOR_MODELS_PARAMS = {
+    "clickbait": {
+        "url": "https://s3.amazonaws.com/models.huggingface.co/bert/pplm/discriminators/clickbait_classifier_head.pt",
+        "class_size": 2,
+        "embed_size": 1024,
+        "class_vocab": {"non_clickbait": 0, "clickbait": 1},
+        "default_class": 1,
+        "pretrained_model": "openai-community/gpt2-medium",
+    },
+    "sentiment": {
+        "url": "https://s3.amazonaws.com/models.huggingface.co/bert/pplm/discriminators/SST_classifier_head.pt",
+        "class_size": 5,
+        "embed_size": 1024,
+        "class_vocab": {"very_positive": 2, "very_negative": 3},
+        "default_class": 3,
+        "pretrained_model": "openai-community/gpt2-medium",
+    },
+}
 
 
 class ClassificationHead(nn.Module):
@@ -231,14 +245,54 @@ def build_bows_one_hot_vectors(bow_indices, tokenizer, device="cuda"):
     return one_hot_bows_vectors
 
 
+def get_classifier(
+    name: Optional[str], class_label: Union[str, int], device: str
+) -> Tuple[Optional[ClassificationHead], Optional[int]]:
+    if name is None:
+        return None, None
+
+    params = DISCRIMINATOR_MODELS_PARAMS[name]
+    classifier = ClassificationHead(class_size=params["class_size"], embed_size=params["embed_size"]).to(device)
+    if "url" in params:
+        resolved_archive_file = cached_path(params["url"])
+    elif "path" in params:
+        resolved_archive_file = params["path"]
+    else:
+        raise ValueError("Either url or path have to be specified in the discriminator model parameters")
+    classifier.load_state_dict(torch.load(resolved_archive_file, map_location=device))
+    classifier.eval()
+
+    if isinstance(class_label, str):
+        if class_label in params["class_vocab"]:
+            label_id = params["class_vocab"][class_label]
+        else:
+            label_id = params["default_class"]
+            print("class_label {} not in class_vocab".format(class_label))
+            print("available values are: {}".format(params["class_vocab"]))
+            print("using default class {}".format(label_id))
+
+    elif isinstance(class_label, int):
+        if class_label in set(params["class_vocab"].values()):
+            label_id = class_label
+        else:
+            label_id = params["default_class"]
+            print("class_label {} not in class_vocab".format(class_label))
+            print("available values are: {}".format(params["class_vocab"]))
+            print("using default class {}".format(label_id))
+
+    else:
+        label_id = params["default_class"]
+
+    return classifier, label_id
+
+
 def full_text_generation(
     model,
     tokenizer,
     context=None,
     num_samples=1,
     device="cuda",
-    bag_of_words=None,
-    discrim=None,
+    discrim="sentiment",
     class_label=None,
     length=100,
     stepsize=0.02,
@@ -493,7 +547,7 @@ def set_generic_model_params(discrim_weights, discrim_meta):
 # KL SCALE 0.1
 
 
-def run_pplm_example(
+def run_pplm(
     pretrained_model="openai-community/gpt2-medium",
     cond_text="",
     uncond=False,
@@ -518,7 +572,6 @@ def run_pplm_example(
     kl_scale=0.01,
     seed=0,
     no_cuda=False,
-    colorama=False,
     repetition_penalty=1.0,
 ):
     # set Random seed
@@ -600,34 +653,10 @@ def run_pplm_example(
 
     generated_texts = []
 
-    bow_word_ids = set()
-    if bag_of_words and colorama:
-        bow_indices = get_bag_of_words_indices(bag_of_words.split(";"), tokenizer)
-        for single_bow_list in bow_indices:
-            # filtering all words in the list composed of more than 1 token
-            filtered = list(filter(lambda x: len(x) <= 1, single_bow_list))
-            # w[0] because we are sure w has only 1 item because previous fitler
-            bow_word_ids.update(w[0] for w in filtered)
-
     # iterate through the perturbed texts
     for i, pert_gen_tok_text in enumerate(pert_gen_tok_texts):
         try:
-            # untokenize unperturbed text
-            if colorama:
-                import colorama
-
-                pert_gen_text = ""
-                for word_id in pert_gen_tok_text.tolist()[0]:
-                    if word_id in bow_word_ids:
-                        pert_gen_text += "{}{}{}".format(
-                            colorama.Fore.RED,
-                            tokenizer.decode([word_id]),
-                            colorama.Style.RESET_ALL,
-                        )
-                    else:
-                        pert_gen_text += tokenizer.decode([word_id])
-            else:
-                pert_gen_text = tokenizer.decode(pert_gen_tok_text.tolist()[0])
+            pert_gen_text = tokenizer.decode(pert_gen_tok_text.tolist()[0])
 
             print("= Perturbed generated text {} =".format(i + 1))
             print(pert_gen_text)
@@ -638,4 +667,4 @@ def run_pplm_example(
         # keep the prefix, perturbed seq, original seq for each index
         generated_texts.append((tokenized_cond_text, pert_gen_tok_text, unpert_gen_tok_text))
 
-    return
+    return unpert_gen_text, generated_texts

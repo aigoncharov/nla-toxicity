@@ -1,16 +1,15 @@
-from transformers import GPT2LMHeadModel
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from run_pplm import run_pplm
+
+gpt2_model = GPT2LMHeadModel.from_pretrained("gpt2")
+gpt2_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
 
-def generate_domain_pairs(prompt, gpt2_model, domain_classifier):
-    # Generate normal version (using regular GPT-2)
-    normal_output = gpt2_model.generate(prompt, do_sample=False)  # greedy sampling
+def generate_domain_pairs(prompt):
+    input_ids = gpt2_tokenizer.encode(prompt, return_tensors="pt")
+    normal_output = gpt2_model.generate(input_ids, do_sample=False, max_length=50)
+    normal_text = gpt2_tokenizer.decode(normal_output[0], skip_special_tokens=True)
 
-    # Generate domain-specific version using PPLM
-    domain_output = run_pplm(
-        model=gpt2_model,
-        cond_text=prompt,
-        attribute_classifier=domain_classifier,
-        # Other PPLM parameters similar to original paper
-    )
+    domain_output = run_pplm(cond_text=prompt)
 
-    return normal_output, domain_output
+    return normal_text, domain_output
