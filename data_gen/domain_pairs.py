@@ -64,5 +64,5 @@ def generate_domain_pairs(prompt):
     return (
         (clean_decoded_text(gold_text), gold_tok_text),
         (clean_decoded_text(unpert[0]), unpert[1]),
-        (clean_decoded_text(pert[0], pert[1])),
+        (clean_decoded_text(pert[0]), pert[1]),
     )
