@@ -1,10 +1,9 @@
 from convokit import Corpus
 import pathlib
 
-WORD_MIN_COUNT = 5
-CHAR_MIN_COUNT = 20
-# Match paper
-LINE_COUNT = 24576
+WORD_MIN_COUNT = 8
+CHAR_MIN_COUNT = 30
+LINE_COUNT = 500
 
 
 def count_words(text):
