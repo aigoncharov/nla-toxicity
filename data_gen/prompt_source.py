@@ -1,7 +1,8 @@
-from convokit import Corpus, download
+from convokit import Corpus
+import pathlib
 
-WORD_MIN_COUNT = 10
-CHAR_MIN_COUNT = 50
+WORD_MIN_COUNT = 5
+CHAR_MIN_COUNT = 20
 # Match paper
 LINE_COUNT = 24576
 
@@ -23,7 +24,7 @@ def count_chars(text):
 
 
 def get_prompts():
-    corpus = Corpus(download("movie-corpus"))
+    corpus = Corpus(str(pathlib.Path(__file__).parent.joinpath("data").resolve()))
     corpus.print_summary_stats()
 
     conversations = []
@@ -38,16 +39,10 @@ def get_prompts():
             conversation_word_count += count_words(utt.text)
             conversation_char_count += count_chars(utt.text)
 
-            if (
-                conversation_word_count > WORD_MIN_COUNT
-                and conversation_char_count > CHAR_MIN_COUNT
-            ):
+            if conversation_word_count > WORD_MIN_COUNT and conversation_char_count > CHAR_MIN_COUNT:
                 break
 
-        if (
-            conversation_word_count > WORD_MIN_COUNT
-            and conversation_char_count > CHAR_MIN_COUNT
-        ):
+        if conversation_word_count > WORD_MIN_COUNT and conversation_char_count > CHAR_MIN_COUNT:
             conversations.append(conversation_text)
 
         if len(conversations) == LINE_COUNT:
