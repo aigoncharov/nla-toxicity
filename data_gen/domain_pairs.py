@@ -55,7 +55,7 @@ def generate_domain_pairs(prompt):
     gold_tok_text = model.generate(
         input_ids=inputs["input_ids"],
         do_sample=False,
-        max_length=LEN,
+        max_length=LEN * 2,
     )
     gold_text = tokenizer.decode(gold_tok_text.tolist()[0], skip_special_tokens=True)
 
