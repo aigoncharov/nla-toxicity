@@ -450,9 +450,10 @@ def generate_text_pplm(
     gamma=1.5,
     gm_scale=0.9,
     kl_scale=0.01,
-    repetition_penalty=1.0,
+    repetition_penalty=1.2,  # Increased from 1.0
+    min_length=10,  # New parameter
+    no_repeat_ngram_size=3,  # New parameter
 ):
-    # Modified to handle tuple-based past_key_values
     output_so_far = None
     if context:
         context_t = torch.tensor(context, device=device, dtype=torch.long)
@@ -467,12 +468,34 @@ def generate_text_pplm(
     unpert_discrim_loss = 0
     loss_in_time = []
 
+    # Track n-grams for repetition prevention
+    generated_ngrams = {}
+
+    # Function to check if current n-gram would create a repetition
+    def would_create_repetition(current_token_id, n):
+        if len(output_so_far[0]) < n:
+            return False
+
+        ngram = tuple(output_so_far[0][-(n - 1) :].tolist() + [current_token_id])
+        return ngram in generated_ngrams.get(n, set())
+
+    # Function to update n-gram tracking
+    def update_ngrams(token_id):
+        if no_repeat_ngram_size > 0:
+            for n in range(1, no_repeat_ngram_size + 1):
+                if len(output_so_far[0]) >= n:
+                    ngram = tuple(output_so_far[0][-(n):].tolist())
+                    if n not in generated_ngrams:
+                        generated_ngrams[n] = set()
+                    generated_ngrams[n].add(ngram)
+
     for i in trange(length, ascii=True):
         if past is None and output_so_far is not None:
             last = output_so_far[:, -1:]
             if output_so_far.shape[1] > 1:
                 past = model(output_so_far[:, :-1])["past_key_values"]
 
+        # Get model output
         lm_output = model(output_so_far)
         unpert_logits, unpert_past, unpert_all_hidden = (
             lm_output["logits"],
@@ -481,16 +504,12 @@ def generate_text_pplm(
         )
         unpert_last_hidden = unpert_all_hidden[-1]
 
-        # check if we are abowe grad max length
-        if i >= grad_length:
-            current_stepsize = stepsize * 0
-        else:
-            current_stepsize = stepsize
+        # Apply gradient updates if within grad_length
+        current_stepsize = stepsize * 0 if i >= grad_length else stepsize
 
-        # modify the past if necessary
+        # Modify the past if necessary
         if not perturb or num_iterations == 0:
             pert_past = past
-
         else:
             accumulated_hidden = unpert_last_hidden[:, :-1, :]
             accumulated_hidden = torch.sum(accumulated_hidden, dim=1)
@@ -500,77 +519,83 @@ def generate_text_pplm(
                     past,
                     model,
                     last,
-                    unpert_past=unpert_past,
-                    unpert_logits=unpert_logits,
-                    accumulated_hidden=accumulated_hidden,
-                    grad_norms=grad_norms,
-                    stepsize=current_stepsize,
-                    one_hot_bows_vectors=one_hot_bows_vectors,
-                    classifier=classifier,
-                    class_label=class_label,
-                    loss_type=loss_type,
-                    num_iterations=num_iterations,
-                    horizon_length=horizon_length,
-                    window_length=window_length,
-                    decay=decay,
-                    gamma=gamma,
-                    kl_scale=kl_scale,
-                    device=device,
+                    unpert_past,
+                    unpert_logits,
+                    accumulated_hidden,
+                    grad_norms,
+                    current_stepsize,
+                    one_hot_bows_vectors,
+                    classifier,
+                    class_label,
+                    loss_type,
+                    num_iterations,
+                    horizon_length,
+                    window_length,
+                    decay,
+                    gamma,
+                    kl_scale,
+                    device,
                 )
                 loss_in_time.append(loss_this_iter)
             else:
                 pert_past = past
 
+        # Get perturbed logits
         lm_output = model(last, past_key_values=pert_past)
-        pert_logits, past = (
-            lm_output["logits"],
-            lm_output["past_key_values"],
-        )
-        pert_logits = pert_logits[:, -1, :] / temperature  # + SMALL_CONST
+        pert_logits, past = lm_output["logits"], lm_output["past_key_values"]
+        pert_logits = pert_logits[:, -1, :] / temperature
 
-        for token_idx in set(output_so_far[0].tolist()):
-            if pert_logits[0, token_idx] < 0:
-                pert_logits[0, token_idx] *= repetition_penalty
-            else:
-                pert_logits[0, token_idx] /= repetition_penalty
+        # Enhanced repetition penalty
+        if output_so_far is not None:
+            for token_idx in set(output_so_far[0].tolist()):
+                # Apply stronger penalty for recently used tokens
+                recency_factor = 1.0
+                if token_idx in output_so_far[0][-20:]:  # Consider last 20 tokens
+                    recency_factor = 1.5  # Stronger penalty for recent tokens
 
+                if pert_logits[0, token_idx] < 0:
+                    pert_logits[0, token_idx] *= repetition_penalty * recency_factor
+                else:
+                    pert_logits[0, token_idx] /= repetition_penalty * recency_factor
+
+        # Apply n-gram repetition prevention
+        for token_idx in range(pert_logits.size(-1)):
+            if would_create_repetition(token_idx, no_repeat_ngram_size):
+                pert_logits[0, token_idx] = -float("inf")
+
+        # Convert to probabilities
         pert_probs = nn.functional.softmax(pert_logits, dim=-1)
 
+        # Apply classifier loss if available
         if classifier is not None:
             ce_loss = nn.CrossEntropyLoss()
             prediction = classifier(torch.mean(unpert_last_hidden, dim=1))
             label = torch.tensor([class_label], device=device, dtype=torch.long)
             unpert_discrim_loss = ce_loss(prediction, label)
-            # print("unperturbed discrim loss", unpert_discrim_loss.data.cpu().numpy())
-        else:
-            unpert_discrim_loss = 0
 
-        # Fuse the modified model and original model
+        # Combine perturbed and unperturbed probabilities
         if perturb:
             unpert_probs = nn.functional.softmax(unpert_logits[:, -1, :], dim=-1)
+            pert_probs = (pert_probs**gm_scale) * (unpert_probs ** (1 - gm_scale))
+            pert_probs = top_k_filter(pert_probs, k=top_k, probs=True)
 
-            pert_probs = (pert_probs**gm_scale) * (unpert_probs ** (1 - gm_scale))  # + SMALL_CONST
-            pert_probs = top_k_filter(pert_probs, k=top_k, probs=True)  # + SMALL_CONST
-
-            # rescale
             if torch.sum(pert_probs) <= 1:
                 pert_probs = pert_probs / torch.sum(pert_probs)
-
         else:
-            pert_logits = top_k_filter(pert_logits, k=top_k)  # + SMALL_CONST
+            pert_logits = top_k_filter(pert_logits, k=top_k)
             pert_probs = nn.functional.softmax(pert_logits, dim=-1)
 
-        # sample or greedy
+        # Sample or select next token
         if sample:
             last = torch.multinomial(pert_probs, num_samples=1)
-
         else:
             _, last = torch.topk(pert_probs, k=1, dim=-1)
 
-        # update context/output_so_far appending the new token
-        output_so_far = last if output_so_far is None else torch.cat((output_so_far, last), dim=1)
+        # Update n-gram tracking
+        update_ngrams(last.item())
 
-        # print(tokenizer.decode(output_so_far.tolist()[0]))
+        # Update output
+        output_so_far = last if output_so_far is None else torch.cat((output_so_far, last), dim=1)
 
     return output_so_far, unpert_discrim_loss, loss_in_time
 
