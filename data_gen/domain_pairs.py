@@ -3,7 +3,7 @@ from run_pplm import run_pplm
 import torch
 import re
 
-LEN = 50
+LEN = 30
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 # load pretrained model
@@ -57,7 +57,7 @@ def generate_domain_pairs(prompt):
         attention_mask=inputs["attention_mask"],
         do_sample=False,
         max_new_tokens=LEN,
-        repetition_penalty=1.3,
+        repetition_penalty=1.2,
         no_repeat_ngram_size=4,
     )
     gold_text = tokenizer.decode(gold_tok_text.tolist()[0], skip_special_tokens=True)
