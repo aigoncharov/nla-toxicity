@@ -3,7 +3,7 @@ from run_pplm import run_pplm
 import torch
 import re
 
-LEN = 30
+LEN = 50
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 # load pretrained model
