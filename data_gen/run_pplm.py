@@ -30,7 +30,7 @@ BAG_OF_WORDS_ARCHIVE_MAP = {
 
 DISCRIMINATOR_MODELS_PARAMS = {
     "clickbait": {
-        "url": "https://s3.amazonaws.com/models.huggingface.co/bert/pplm/discriminators/clickbait_classifier_head.pt",
+        "path": str(Path(__file__).parent.joinpath("data/clickbait_classifier_head.pt")),
         "class_size": 2,
         "embed_size": 1024,
         "class_vocab": {"non_clickbait": 0, "clickbait": 1},
@@ -630,7 +630,7 @@ def run_pplm(
     uncond=False,
     num_samples=1,
     bag_of_words=None,
-    discrim="sentiment",
+    discrim="clickbait",
     discrim_weights=None,
     discrim_meta=None,
     class_label=-1,
