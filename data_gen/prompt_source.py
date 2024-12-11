@@ -34,6 +34,9 @@ def get_prompts():
         conversation_char_count = 0
 
         for utt in convo.iter_utterances():
+            if utt.speaker.id == "AutoModerator":
+                continue
+
             conversation_text += utt.text + " "
             conversation_word_count += count_words(utt.text)
             conversation_char_count += count_chars(utt.text)
