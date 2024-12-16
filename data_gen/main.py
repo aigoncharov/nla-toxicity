@@ -6,7 +6,7 @@ from datetime import datetime
 prompts = get_prompts()
 print(len(prompts))
 
-file_name = f"clickbait_pairwise_{datetime.now().strftime('%Y-%m-%d-%H_%M_%S')}.jsonl"
+file_name = f"nsfw_pairwise_{datetime.now().strftime('%Y-%m-%d-%H_%M_%S')}.jsonl"
 
 for i, prompt in enumerate(prompts):
     print(f"Generating {i + 1} out of {len(prompts)}")

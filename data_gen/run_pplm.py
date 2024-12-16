@@ -8,6 +8,7 @@ from torch import nn
 from tqdm import trange
 
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import AutoModelForSequenceClassification
 
 from pathlib import Path
 
@@ -43,6 +44,14 @@ DISCRIMINATOR_MODELS_PARAMS = {
         "embed_size": 1024,
         "class_vocab": {"very_positive": 2, "very_negative": 3},
         "default_class": 3,
+        "pretrained_model": "openai-community/gpt2-medium",
+    },
+    "nsfw": {
+        "path": str(Path(__file__).parent.joinpath("data/nsfw.bin")),
+        "class_size": 2,
+        "embed_size": 3072,
+        "class_vocab": {"SFW": 0, "NSFW": 1},
+        "default_class": 1,
         "pretrained_model": "openai-community/gpt2-medium",
     },
 }
@@ -298,6 +307,22 @@ def get_classifier(
     return classifier, label_id
 
 
+class HiddenStateClassifier:
+    def __init__(self):
+        self.model = AutoModelForSequenceClassification.from_pretrained("michellejieli/NSFW_text_classifier")
+        self.adapter = nn.Linear(1024, 768)
+
+    def __call__(self, hidden_states):
+        # Adapt hidden states if necessary
+        adapted_hidden = self.adapter(hidden_states)
+        # Forward pass through the classification head only
+        logits = self.model.classifier(adapted_hidden)
+        return logits
+
+
+nsfw_classifier = HiddenStateClassifier()
+
+
 def get_bag_of_words_indices(bag_of_words_ids_or_paths: List[str], tokenizer) -> List[List[List[int]]]:
     bow_indices = []
     for id_or_path in bag_of_words_ids_or_paths:
@@ -351,7 +376,9 @@ def full_text_generation(
     repetition_penalty=1.0,
     **kwargs,
 ):
-    classifier, class_id = get_classifier(discrim, class_label, device)
+    # classifier, class_id = get_classifier(discrim, class_label, device)
+    classifier = nsfw_classifier
+    class_id = 1
 
     bow_indices = []
     if bag_of_words:
@@ -630,7 +657,7 @@ def run_pplm(
     uncond=False,
     num_samples=1,
     bag_of_words=None,
-    discrim="clickbait",
+    discrim="nsfw",
     discrim_weights=None,
     discrim_meta=None,
     class_label=-1,

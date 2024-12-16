@@ -6,3 +6,4 @@ data/*
 .DS_Store
 sentiment*.jsonl
 clickbait*.jsonl
+nsfw*.jsonl
